@@ -28,7 +28,7 @@ testonderwerp <- fread(file.path("~/Data science cursus coursera/course3week4/UC
 test <- cbind(testactiviteit, testonderwerp, test)
 
 ## merging data train & test
-mergeddata <- rbind(training, test, idcol="Activiteit")
+mergeddata <- rbind(training, test)
 
 ## inserting activitylabels
 mergeddata$Activiteit <- factor(mergeddata$Activiteit, levels = labels$Klasse, labels = labels$Activiteit)
