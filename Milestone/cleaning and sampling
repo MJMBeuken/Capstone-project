@@ -1,0 +1,255 @@
+## Reading data
+US.blog <- readLines("en_US.blogs.txt",skipNul = T, warn = T)
+US.news <- readLines("en_US.news.txt",skipNul = T, warn = T)
+US.twitter <- readLines("en_US.twitter.txt",skipNul = T, warn = T)
+
+
+#Get line counts
+bloglines <- length(US.blog)
+newslines <- length(US.news)
+twitterlines <- length(US.twitter)
+
+#Get max line length
+blog.char.cnt <- lapply(US.blog, nchar)
+blog.max.chars <- blog.char.cnt[[which.max(blog.char.cnt)]]
+
+news.char.cnt <- lapply(US.news, nchar)
+news.max.chars <- news.char.cnt[[which.max(news.char.cnt)]]
+
+twitter.char.cnt <- lapply(US.twitter, nchar)
+twitter.max.chars <- twitter.char.cnt[[which.max(twitter.char.cnt)]]
+
+#Get word counts (based on spaces)
+blog.words <- sum( sapply(gregexpr("\\S+", US.blog), length ) )
+news.words <- sum( sapply(gregexpr("\\S+", US.news), length ) )
+twitter.words <- sum( sapply(gregexpr("\\S+", US.twitter), length ) )
+
+#Summary of corpus stats
+stats <- data.frame( "Files" = c("Blogs", "News", "Twitter"),
+                            "Line count" = c(bloglines, newslines, twitterlines),
+                            "Longest Line" = c(blog.max.chars, news.max.chars, twitter.max.chars),
+                            "Word count" = c(blog.words, news.words, twitter.words))
+
+
+## Sampling
+set.seed(1234)
+samplesize.blogs <- round(0.05*length(US.blog))
+samplesize.news <- round(0.05*length(US.news))
+samplesize.twitter <- round(0.05*length(US.twitter))
+
+
+sample.blogs   <- sample(US.blog, samplesize.blogs, replace = T)
+sample.news    <- sample(US.news, samplesize.news, replace = T)
+sample.twitter <- sample(US.twitter, samplesize.twitter, replace = T)
+
+writeLines(sample.blogs, "./en_US.blog.sample.txt")
+writeLines(sample.news, "./en_US.news.sample.txt")
+writeLines(sample.twitter, "./en_US.twitter.sample.txt")
+
+sample <- c(sample.blogs, sample.news, sample.twitter)
+
+library(reshape2)
+library(ggplot2)
+library(scales)
+library(grid)
+library(dplyr)
+library(tm)
+## installing ggpubr from github
+library(ggpubr)
+
+vectorsample <- VectorSource(sample)
+vectorsample <- Corpus(vectorsample)
+
+
+## Remove URL's
+
+removeURL <- gsub("http[^[:space:]]*", "", vectorsample)
+writeLines(removeURL, "./sample.removeurl.txt")
+
+
+# Remove anything other than English letters or space
+
+removeNumPunct <- gsub("[^[:alpha:][:space:]]*", "", removeURL)
+removePunct <- removePunctuation(removeNumPunct)
+writeLines(removePunct, "./sample.removenumpunct.txt")
+
+## All lower case
+
+cleansample <- tolower(removePunct)
+
+
+## remove profanity
+## profanity list
+Profanitylist <- read.csv("./Profanitylist.csv", header=FALSE)
+
+Profanitylist <- as.character(Profanitylist$V1)
+Profanitylist <- c(Profanitylist)
+
+##Then you can apply custom words to your text file.
+
+cleansample <- VectorSource(cleansample)
+cleansample <- VCorpus(cleansample)
+cleansample <- tm_map(cleansample, content_transformer(tolower))
+cleansample <- tm_map(cleansample, removeWords, Profanitylist)
+cleansample <- tm_map(cleansample, removeWords, c("vested", "interests"))
+cleansample <- tm_map(cleansample, stripWhitespace)
+
+cleansample.ns <- tm_map(cleansample, removeWords, stopwords('english'))
+
+
+dtm <- DocumentTermMatrix(cleansample.ns)
+
+## checking if there is still profanity in corpus
+"fuck" %in% dtm
+"boner" %in% dtm
+
+## converting text to matrix and Need to remove sparse elements, otherwise recource of memory will be to demanding
+dtm.ST <- removeSparseTerms(dtm, 0.9999)
+dtm.matrix <- as.matrix(dtm.ST)
+
+
+wordcount <- colSums(dtm.matrix)
+toptwenty <- head(sort(wordcount, decreasing=TRUE), 20)
+
+
+
+
+dfplot <- as.data.frame(melt(toptwenty))
+dfplot$word <- dimnames(dfplot)[[1]]
+dfplot$word <- factor(dfplot$word,
+                      levels=dfplot$word[order(dfplot$value,
+                                               decreasing=TRUE)])
+
+fig <- ggplot(dfplot, aes(x=word, y=value)) + geom_bar(stat="identity", color = "blue", fill = "white") + xlab("Word") + ylab("Count") + 
+        theme(axis.text.x = element_text(angle = 90, size = 10, hjust = 1, vjust = 0.4))
+
+## proportion
+count <- sum(sort(wordcount, decreasing = T))
+prop <- toptwenty/count
+fig.prop <- ggplot(dfplot, aes(x = word, y = prop)) +  
+        geom_bar(stat="identity", color = "blue", fill = "white") + xlab("Word")+ ylab("Proportion") +
+        theme(axis.text.x = element_text(angle = 90, size = 10, hjust = 1, vjust = 0.4)) +      
+        scale_y_continuous(labels = percent)
+
+
+
+
+png("plot1.png")
+ggarrange(fig, fig.prop,
+          ncol = 2)
+dev.off()
+
+## Trying to get a picture of the pair of words that are most common.
+twogram <-
+        function(x)
+                unlist(lapply(ngrams(words(x), 2), paste, collapse = " "), use.names = FALSE)
+
+
+dtm2 <- DocumentTermMatrix(cleansample.ns,
+                           control=list(tokenize=twogram))
+
+# Need to remove sparse elements, otherwise recource of memory will be to demanding
+dtm2.ST <- removeSparseTerms(dtm2, 0.9999)
+dtm2.matrix <- as.matrix(dtm2.ST)
+
+wordcount2 <- colSums(dtm2.matrix)
+toptwenty2 <- head(sort(wordcount2, decreasing=TRUE), 20)
+
+dfplot2 <- as.data.frame(melt(toptwenty2))
+dfplot2$word <- dimnames(dfplot2)[[1]]
+dfplot2$word <- factor(dfplot2$word,
+                      levels=dfplot2$word[order(dfplot2$value,
+                                               decreasing=TRUE)])
+
+fig2 <- ggplot(dfplot2, aes(x=word, y=value)) + geom_bar(stat="identity", color = "blue", fill = "white") + xlab("Pair of words")+ ylab("Count") +
+        theme(axis.text.x = element_text(angle = 45, size = 10, hjust = 1))
+
+
+## proportion
+
+count2 <- sum(sort(wordcount2, decreasing = T))
+prop2 <- toptwenty2/count2
+fig.prop2 <- ggplot(dfplot2, aes(x = word, y = prop2)) +  
+        geom_bar(stat="identity", color = "blue", fill = "white") + xlab("Pair of words")+ ylab("Proportion") +
+        theme(axis.text.x = element_text(angle = 45, size = 10, hjust = 1)) +      
+        scale_y_continuous(labels = percent)
+
+png("plot2.png")
+ggarrange(fig2, fig.prop2,
+          ncol = 2)
+dev.off()
+
+
+## Trying to get a picture of the triplets of words that are most common.
+threegram <-
+        function(x)
+                unlist(lapply(ngrams(words(x), 3), paste, collapse = " "), use.names = FALSE)
+
+dtm3 <- DocumentTermMatrix(cleansample.ns,
+                           control=list(tokenize=threegram))
+
+dtm3.matrix <- as.matrix(dtm3)
+
+wordcount3 <- colSums(dtm3.matrix)
+toptwenty3 <- head(sort(wordcount3, decreasing=TRUE), 20)
+
+dfplot3 <- as.data.frame(melt(toptwenty3))
+dfplot3$word <- dimnames(dfplot3)[[1]]
+dfplot3$word <- factor(dfplot3$word,
+                      levels=dfplot3$word[order(dfplot3$value,
+                                               decreasing=TRUE)])
+
+fig3 <- ggplot(dfplot3, aes(x=word, y=value)) + geom_bar(stat="identity", color = "blue", fill = "white") + xlab("Triplets of words")+ ylab("Count") +
+        theme(axis.text.x = element_text(angle = 45, size = 10, hjust = 1))
+
+
+
+## plot with proportion on y-axis
+
+count3 <- sum(sort(wordcount3, decreasing = T))
+prop3 <- toptwenty3/count
+fig.prop3 <- ggplot(dfplot3, aes(x = word, y = prop3)) +  
+        geom_bar(stat="identity", color = "blue", fill = "white") + xlab("Triplets of words")+ ylab("Proportion") +
+                theme(axis.text.x = element_text(angle = 45, size = 10, hjust = 1)) +      
+                        scale_y_continuous(labels = percent)
+png("plot3.png")
+ggarrange(fig3, fig.prop3,
+          ncol = 2)
+dev.off()
+
+## Trying to get a picture of the quadriples of words that are most common.
+fourgram <-
+        function(x)
+                unlist(lapply(ngrams(words(x), 4), paste, collapse = " "), use.names = FALSE)
+
+dtm4 <- DocumentTermMatrix(cleansample,
+                           control=list(tokenize=fourgram))
+
+dtm4.matrix <- as.matrix(dtm4)
+
+wordcount4 <- colSums(dtm4.matrix)
+toptwenty4 <- head(sort(wordcount4, decreasing=TRUE), 20)
+
+dfplot4 <- as.data.frame(melt(toptwenty4))
+dfplot4$word <- dimnames(dfplot4)[[1]]
+dfplot4$word <- factor(dfplot4$word,
+                       levels=dfplot4$word[order(dfplot4$value,
+                                                 decreasing=TRUE)])
+
+fig4 <- ggplot(dfplot4, aes(x=word, y=value)) + geom_bar(stat="identity", color = "blue", fill = "white") + xlab("quadruplets of words")+ ylab("Count") +
+        theme(axis.text.x = element_text(angle = 45, size = 10, hjust = 1))
+
+
+
+## plot with proportion on y-axis
+
+count4 <- sum(sort(wordcount4, decreasing = T))
+prop4 <- toptwenty4/count
+fig.prop4 <- ggplot(dfplot4, aes(x = word, y = prop4)) +  
+        geom_bar(stat="identity", color = "blue", fill = "white") + xlab("quadruplets of words")+ ylab("Proportion") +
+        theme(axis.text.x = element_text(angle = 45, size = 10, hjust = 1)) +      
+        scale_y_continuous(labels = percent)
+png("plot4.png")
+ggarrange(fig4, fig.prop4,
+          ncol = 2)
+dev.off()
